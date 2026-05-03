@@ -1,0 +1,5 @@
+__pycache__
+.venv
+face_roi.db
+test_frame.jpg
+detector.tflit
