@@ -1,0 +1,5 @@
+__pycache__
+.venv
+.git
+face_roi.db
+static/uploads/*
