@@ -1,0 +1,12 @@
+services:
+  backend:
+    build: .
+    container_name: real-time-face-detection
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      # Mount DB folder to persist the SQLite file between container restarts
+      - ./face_roi.db:/app/face_roi.db
+    environment:
+      - PYTHONUNBUFFERED=1

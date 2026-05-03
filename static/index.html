@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Face Detection</title>
+    <!-- Use vanilla CSS for modern styling -->
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .container {
+            display: flex;
+            gap: 2rem;
+            max-width: 1200px;
+            width: 100%;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .card {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            background: #000;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            border: 2px solid #334155;
+        }
+
+        img,
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            background: var(--surface);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        .status-dot.active {
+            background: #22c55e;
+            box-shadow: 0 0 10px #22c55e;
+        }
+
+        .roi-panel {
+            width: 350px;
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            display: flex;
+            flex-direction: column;
+            max-height: 550px;
+        }
+
+        .roi-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .roi-list {
+            overflow-y: auto;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .roi-item {
+            background: #334155;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .roi-item span {
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>Face Detection API</h1>
+        <p class="text-muted">Real-time object detection processing over PyAV & WebSocket</p>
+    </div>
+
+    <div class="container">
+        <!-- Main Video Card -->
+        <div class="card">
+            <div class="status">
+                <div id="connection-status" class="status-dot"></div>
+                <span id="status-text">Disconnected</span>
+            </div>
+
+            <div class="video-container">
+                <!-- Display Area -->
+                <img id="processed-video" alt="Waiting for feed..." />
+
+                <!-- Hidden Capture Elements -->
+                <video id="webcam" autoplay playsinline class="hidden"></video>
+                <canvas id="capture-canvas" class="hidden"></canvas>
+            </div>
+
+            <div class="controls">
+                <button id="start-btn">Start Camera & Feed</button>
+                <button id="stop-btn" disabled>Stop Feed</button>
+            </div>
+        </div>
+
+        <!-- ROI Results Panel -->
+        <div class="roi-panel">
+            <div class="roi-header">
+                <h2>Region of Interest Log</h2>
+                <button id="refresh-roi" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">Refresh</button>
+            </div>
+            <div class="roi-list" id="roi-list">
+                <!-- Items populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('capture-canvas');
+        const img = document.getElementById('processed-video');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusDot = document.getElementById('connection-status');
+        const statusText = document.getElementById('status-text');
+        const refreshRoiBtn = document.getElementById('refresh-roi');
+        const roiList = document.getElementById('roi-list');
+
+        let defaultImgSrc = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="50%" fill="%2394a3b8" font-family="sans-serif" font-size="20" text-anchor="middle">Camera Offline</text></svg>';
+        img.src = defaultImgSrc;
+
+        let ws;
+        let stream;
+        let captureInterval;
+        const FPS = 15; // Set desired frame rate per second
+
+        async function fetchROI() {
+            try {
+                const res = await fetch('/api/roi?limit=20');
+                const data = await res.json();
+                roiList.innerHTML = '';
+                data.forEach(roi => {
+                    const el = document.createElement('div');
+                    el.className = 'roi-item';
+                    const time = new Date(roi.timestamp).toLocaleTimeString();
+                    el.innerHTML = `
+                        <div><strong>Face Detected</strong> at ${time}</div>
+                        <div><span>ID:</span> ${roi.id} | <span>X:</span> ${roi.x_min.toFixed(1)}, <span>Y:</span> ${roi.y_min.toFixed(1)}</div>
+                        <div><span>Area:</span> ${roi.width.toFixed(1)} x ${roi.height.toFixed(1)}</div>
+                    `;
+                    roiList.appendChild(el);
+                });
+            } catch (e) {
+                console.error("Failed to fetch ROI", e);
+            }
+        }
+
+        refreshRoiBtn.addEventListener('click', fetchROI);
+
+        async function startCamera() {
+            try {
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 }
+                });
+                video.srcObject = stream;
+
+                // Wait for video stream to start playing
+                await video.play();
+
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+
+                // Only connect WS after ensuring camera is active
+                connectWebSocket();
+            } catch (err) {
+                console.error("Camera error:", err);
+                alert("Could not access camera. Please allow permissions.");
+            }
+        }
+
+        function connectWebSocket() {
+            const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${window.location.host}/ws/feed`);
+
+            ws.onopen = () => {
+                statusDot.classList.add('active');
+                statusText.textContent = 'Connected & Processing';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+
+                captureInterval = setInterval(() => {
+                    captureAndSendFrame();
+                }, 1000 / FPS);
+            };
+
+            ws.onmessage = async (event) => {
+                // event.data will be Blob if server sends bytes
+                if (event.data instanceof Blob) {
+                    const objectUrl = URL.createObjectURL(event.data);
+
+                    // Cleanup previous URL to avoid memory leak
+                    if (img.dataset.objUrl) {
+                        URL.revokeObjectURL(img.dataset.objUrl);
+                    }
+
+                    img.src = objectUrl;
+                    img.dataset.objUrl = objectUrl;
+                }
+            };
+
+            ws.onclose = () => {
+                stopFeed();
+            };
+
+            ws.onerror = (e) => {
+                console.error("WebSocket error", e);
+                stopFeed();
+            }
+        }
+
+        function captureAndSendFrame() {
+            if (ws.readyState !== WebSocket.OPEN) return;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Getting blob is generally slower than get dataURL but creates smaller payload 
+            // We use canvas.toBlob for better websocket handling of binary 
+            canvas.toBlob((blob) => {
+                if (blob && ws.readyState === WebSocket.OPEN) {
+                    ws.send(blob);
+                }
+            }, 'image/jpeg', 0.8);
+        }
+
+        function stopFeed() {
+            if (captureInterval) clearInterval(captureInterval);
+            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
+            statusDot.classList.remove('active');
+            statusText.textContent = 'Disconnected';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            img.src = defaultImgSrc;
+        }
+
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopFeed);
+
+        // Fetch ROI periodically
+        setInterval(fetchROI, 5000);
+        fetchROI(); // initial fetch
+    </script>
+</body>
+
+</html>
